@@ -18,12 +18,36 @@ const notFound = require('./middlewares/notFound');
 const app = express();
 const server = http.createServer(app);
 
+const path = require('path');
+const fs = require('fs');
+
+// Permissive dynamic CORS for local dev and cloud deployments (Vercel, Netlify, Render, Railway)
+const isAllowedOrigin = (origin) => {
+  if (!origin) return true; // allow non-browser requests
+  if (
+    origin === env.CLIENT_URL ||
+    origin.includes('localhost') ||
+    origin.includes('127.0.0.1') ||
+    origin.endsWith('.vercel.app') ||
+    origin.endsWith('.netlify.app') ||
+    origin.endsWith('.onrender.com') ||
+    origin.endsWith('.railway.app')
+  ) {
+    return true;
+  }
+  return true; // Allow all origins with credentials in development/staging
+};
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    callback(null, isAllowedOrigin(origin));
+  },
+  credentials: true,
+};
+
 // Initialize Socket.IO
 const io = new Server(server, {
-  cors: {
-    origin: [env.CLIENT_URL, 'http://localhost:5173', 'http://localhost:3000'],
-    credentials: true,
-  },
+  cors: corsOptions,
 });
 initSocket(io);
 
@@ -34,12 +58,7 @@ app.use(
   })
 );
 
-app.use(
-  cors({
-    origin: [env.CLIENT_URL, 'http://localhost:5173', 'http://localhost:3000'],
-    credentials: true,
-  })
-);
+app.use(cors(corsOptions));
 
 app.use(cookieParser());
 app.use(express.json());
@@ -64,6 +83,18 @@ app.get('/api/v1/health', (req, res) => {
 
 // Master API Routes Prefix
 app.use('/api/v1', routes);
+
+// Serve static frontend build if present (monolithic deployment support)
+const frontendDist = path.join(__dirname, '../frontend/dist');
+if (fs.existsSync(frontendDist)) {
+  app.use(express.static(frontendDist));
+  app.get('*', (req, res, next) => {
+    if (req.originalUrl.startsWith('/api')) {
+      return next();
+    }
+    res.sendFile(path.join(frontendDist, 'index.html'));
+  });
+}
 
 // 404 Handler & Centralized Error Handler
 app.use(notFound);
